@@ -12,7 +12,7 @@
 # this file makes you do the pinning by hand once.
 #
 # ON COLAB: delete the torch line rather than pinning it. Colab ships torch
-# preinstalled and installing a second one breaks the runtime. Pin it locally.
+# preinstalled and installing a second one breaks the runtime. Pin it locally...
 
 fastapi==0.115.*
 uvicorn[standard]==0.32.*
@@ -22,3 +22,4 @@ torch==2.5.*
 accelerate==1.1.*
 httpx==0.27.*
 openai==1.54.*
+

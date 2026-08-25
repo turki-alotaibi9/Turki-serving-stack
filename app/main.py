@@ -28,7 +28,7 @@ from schemas import (
     ModelList,
 )
 
-MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")
+MODEL_ID = os.environ.get("MODEL_ID", r"C:\Models\Qwen2.5-1.5B")
 
 app = FastAPI(title="serving-stack", version="wk2")
 
