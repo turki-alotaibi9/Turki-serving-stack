@@ -6,7 +6,7 @@ import time
 import uuid
 
 import torch
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, status
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from schemas import (
@@ -25,8 +25,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("serving-stack")
 
 MODEL_ID = os.environ.get("MODEL_ID", r"C:\Models\Qwen2.5-1.5B")
+API_KEY = os.environ.get("API_KEY", "")
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "256"))
 
 app = FastAPI(title="serving-stack", version="wk4-gpu")
+
+
+# API key protection for /v1/*
+def require_api_key(
+    authorization: str | None = Header(default=None),
+):
+    if not API_KEY:
+        return
+
+    if authorization != f"Bearer {API_KEY}":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+        )
+
 
 # Step 2: Dynamic Device Detection (CUDA if available, else CPU)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -71,7 +88,11 @@ def health() -> HealthResponse:
 
 
 @app.get("/v1/models", response_model=ModelList)
-def list_models() -> ModelList:
+def list_models(
+    authorization: str | None = Header(default=None),
+) -> ModelList:
+    require_api_key(authorization)
+
     card = ModelCard(
         id=MODEL_ID,
         object="model",
@@ -82,7 +103,12 @@ def list_models() -> ModelList:
 
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
+def chat_completions(
+    req: ChatCompletionRequest,
+    authorization: str | None = Header(default=None),
+) -> ChatCompletionResponse:
+    require_api_key(authorization)
+
     if req.model != MODEL_ID:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,23 +126,33 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
     prompt_tokens = input_ids.shape[1]
 
     do_sample = req.temperature > 0.0
+
+    # Limit requested max_tokens to MAX_TOKENS from environment
+    effective_max_tokens = min(req.max_tokens, MAX_TOKENS)
+
     generate_kwargs = {
         "input_ids": input_ids,
-        "max_new_tokens": req.max_tokens,
+        "max_new_tokens": effective_max_tokens,
         "do_sample": do_sample,
     }
+
     if do_sample:
         generate_kwargs["temperature"] = req.temperature
 
     with torch.no_grad():
         out = model.generate(**generate_kwargs)
 
-    new_tokens = out[0][prompt_tokens:] 
+    new_tokens = out[0][prompt_tokens:]
     completion_tokens = len(new_tokens)
     total_tokens = prompt_tokens + completion_tokens
 
     text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    finish_reason = "length" if completion_tokens >= req.max_tokens else "stop"
+
+    finish_reason = (
+        "length"
+        if completion_tokens >= effective_max_tokens
+        else "stop"
+    )
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -126,7 +162,10 @@ def chat_completions(req: ChatCompletionRequest) -> ChatCompletionResponse:
         choices=[
             Choice(
                 index=0,
-                message=ResponseMessage(role="assistant", content=text),
+                message=ResponseMessage(
+                    role="assistant",
+                    content=text,
+                ),
                 finish_reason=finish_reason,
             )
         ],
